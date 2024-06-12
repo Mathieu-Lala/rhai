@@ -80,7 +80,7 @@ impl ExportedParams for ExportedModParams {
 
         let scope = scope.unwrap_or_default();
 
-        Ok(ExportedModParams { name, skip, scope })
+        Ok(Self { name, skip, scope })
     }
 }
 
@@ -95,9 +95,8 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn set_params(&mut self, params: ExportedModParams) -> syn::Result<()> {
+    pub fn set_params(&mut self, params: ExportedModParams) {
         self.params = params;
-        Ok(())
     }
 }
 
@@ -128,7 +127,7 @@ impl Parse for Module {
                             f.set_cfg_attrs(crate::attrs::collect_cfg_attr(&item_fn.attrs));
 
                             #[cfg(feature = "metadata")]
-                            f.set_comments(crate::attrs::doc_attributes(&item_fn.attrs)?);
+                            f.set_comments(crate::attrs::doc_attributes(&item_fn.attrs));
                             Ok(f)
                         })?;
 
@@ -147,7 +146,7 @@ impl Parse for Module {
                     consts.push(ExportedConst {
                         name: ident.to_string(),
                         cfg_attrs: crate::attrs::collect_cfg_attr(attrs),
-                    })
+                    });
                 }
             }
             // Gather and parse type definitions.
@@ -165,8 +164,8 @@ impl Parse for Module {
                         typ: ty.clone(),
                         cfg_attrs: crate::attrs::collect_cfg_attr(attrs),
                         #[cfg(feature = "metadata")]
-                        comments: crate::attrs::doc_attributes(attrs)?,
-                    })
+                        comments: crate::attrs::doc_attributes(attrs),
+                    });
                 }
             }
             // Gather and parse sub-module definitions.
@@ -176,20 +175,15 @@ impl Parse for Module {
             sub_modules.reserve(content.len() - fns.len() - consts.len());
             let mut i = 0;
             while i < content.len() {
-                match content[i] {
-                    syn::Item::Mod(..) => {
-                        let mut item_mod = match content.remove(i) {
-                            syn::Item::Mod(m) => m,
-                            _ => unreachable!(),
+                match content.get(i) {
+                    Some(syn::Item::Mod(..)) => {
+                        let syn::Item::Mod(mut item_mod) = content.remove(i) else {
+                            unreachable!()
                         };
                         let params: ExportedModParams =
                             crate::attrs::inner_item_attributes(&mut item_mod.attrs, "rhai_mod")?;
-                        let module = syn::parse2::<Module>(item_mod.to_token_stream()).and_then(
-                            |mut m| {
-                                m.set_params(params)?;
-                                Ok(m)
-                            },
-                        )?;
+                        let mut module = syn::parse2::<Self>(item_mod.to_token_stream())?;
+                        module.set_params(params);
                         sub_modules.push(module);
                     }
                     _ => i += 1,
@@ -198,7 +192,7 @@ impl Parse for Module {
         } else {
             fns = Vec::new();
         }
-        Ok(Module {
+        Ok(Self {
             mod_all,
             fns,
             consts,
@@ -214,15 +208,15 @@ impl Module {
         &self.mod_all.attrs
     }
 
-    pub fn module_name(&self) -> &syn::Ident {
+    pub const fn module_name(&self) -> &syn::Ident {
         &self.mod_all.ident
     }
 
     pub fn exported_name(&self) -> Cow<str> {
-        if !self.params.name.is_empty() {
-            (&self.params.name).into()
-        } else {
+        if self.params.name.is_empty() {
             self.module_name().to_string().into()
+        } else {
+            (&self.params.name).into()
         }
     }
 
@@ -236,7 +230,7 @@ impl Module {
         self.params.skip = !keep;
     }
 
-    pub fn skipped(&self) -> bool {
+    pub const fn skipped(&self) -> bool {
         self.params.skip
     }
 
@@ -252,7 +246,7 @@ impl Module {
         crate::rhai_module::check_rename_collisions(&self.fns)?;
 
         // Extract the current structure of the module.
-        let Module {
+        let Self {
             mut mod_all,
             mut fns,
             consts,
@@ -267,11 +261,19 @@ impl Module {
         let mod_attrs = mem::take(&mut mod_all.attrs);
 
         #[cfg(feature = "metadata")]
-        let mod_doc = crate::attrs::doc_attributes(&mod_attrs)?.join("\n");
+        let mod_doc = crate::attrs::doc_attributes(&mod_attrs).join("\n");
         #[cfg(not(feature = "metadata"))]
         let mod_doc = String::new();
 
-        if !params.skip {
+        if params.skip {
+            // Regenerate the original module as-is.
+            Ok(quote! {
+                #(#mod_attrs)*
+                #mod_vis mod #mod_name {
+                    #(#orig_content)*
+                }
+            })
+        } else {
             // Generate new module items.
             //
             // This is done before inner module recursive generation, because that is destructive.
@@ -303,19 +305,11 @@ impl Module {
                     #mod_gen
                 }
             })
-        } else {
-            // Regenerate the original module as-is.
-            Ok(quote! {
-                #(#mod_attrs)*
-                #mod_vis mod #mod_name {
-                    #(#orig_content)*
-                }
-            })
         }
     }
 
     #[allow(dead_code)]
-    pub fn name(&self) -> &syn::Ident {
+    pub const fn name(&self) -> &syn::Ident {
         &self.mod_all.ident
     }
 
@@ -335,7 +329,7 @@ impl Module {
     }
 
     #[allow(dead_code)]
-    pub fn sub_modules(&self) -> &[Module] {
+    pub fn sub_modules(&self) -> &[Self] {
         &self.sub_modules
     }
 

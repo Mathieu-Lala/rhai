@@ -26,3 +26,11 @@ quote = "1.0.0"
 [dev-dependencies]
 rhai = { path = "..", version = "1.17.0", features = ["metadata"] }
 trybuild = "1.0.0"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+too_many_lines = "allow"
+negative_feature_names = "allow"
