@@ -735,6 +735,7 @@ impl ExportedFn {
             let is_string;
             let is_ref;
             match arg {
+                syn::FnArg::Receiver(..) => unreachable!("how did this happen!?"),
                 syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
                     #[cfg(feature = "metadata")]
                     let arg_name = format!("{}: {}", pat.to_token_stream(), print_type(ty));
@@ -778,23 +779,22 @@ impl ExportedFn {
                     );
                     #[cfg(feature = "metadata")]
                     input_type_names.push(arg_name);
-                    if is_string {
-                        input_type_exprs.push(
-                            syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
-                                TypeId::of::<ImmutableString>()
-                            ))
-                            .unwrap(),
-                        );
-                    } else {
-                        input_type_exprs.push(
-                            syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
-                                TypeId::of::<#arg_type>()
-                            ))
-                            .unwrap(),
-                        );
-                    }
+                    // if is_string {
+                    //     input_type_exprs.push(
+                    //         syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
+                    //             TypeId::of::<ImmutableString>()
+                    //         ))
+                    //         .unwrap(),
+                    //     );
+                    // } else {
+                    input_type_exprs.push(
+                        syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
+                            dbg!(TypeId::of::<#arg_type>())
+                        ))
+                        .unwrap(),
+                    );
+                    // }
                 }
-                syn::FnArg::Receiver(..) => unreachable!("how did this happen!?"),
             }
             unpack_exprs.push(
                 syn::parse2::<syn::Expr>(if is_ref {
