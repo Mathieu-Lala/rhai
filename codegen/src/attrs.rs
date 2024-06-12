@@ -131,7 +131,7 @@ pub fn inner_item_attributes<T: ExportedParams>(
 }
 
 #[cfg(feature = "metadata")]
-pub fn doc_attributes(attrs: &[syn::Attribute]) -> syn::Result<Vec<String>> {
+pub fn doc_attributes(attrs: &[syn::Attribute]) -> Vec<String> {
     // Find the #[doc] attribute which will turn be read for function documentation.
     let mut comments = Vec::new();
     let mut buf = String::new();
@@ -176,7 +176,7 @@ pub fn doc_attributes(attrs: &[syn::Attribute]) -> syn::Result<Vec<String>> {
         comments.push(buf);
     }
 
-    Ok(comments)
+    comments
 }
 
 pub fn collect_cfg_attr(attrs: &[syn::Attribute]) -> Vec<syn::Attribute> {

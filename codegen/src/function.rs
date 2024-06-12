@@ -3,6 +3,7 @@ use quote::{quote, quote_spanned, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
+    TypePath,
 };
 
 #[cfg(no_std)]
@@ -45,19 +46,19 @@ pub enum FnSpecialAccess {
 impl FnSpecialAccess {
     pub fn get_fn_name(&self) -> Option<(String, String, Span)> {
         match self {
-            FnSpecialAccess::None => None,
-            FnSpecialAccess::Property(Property::Get(ref g)) => {
+            Self::None => None,
+            Self::Property(Property::Get(ref g)) => {
                 Some((format!("{FN_GET}{g}"), g.to_string(), g.span()))
             }
-            FnSpecialAccess::Property(Property::Set(ref s)) => {
+            Self::Property(Property::Set(ref s)) => {
                 Some((format!("{FN_SET}{s}"), s.to_string(), s.span()))
             }
-            FnSpecialAccess::Index(Index::Get) => Some((
+            Self::Index(Index::Get) => Some((
                 FN_IDX_GET.to_string(),
                 "index_get".to_string(),
                 Span::call_site(),
             )),
-            FnSpecialAccess::Index(Index::Set) => Some((
+            Self::Index(Index::Set) => Some((
                 FN_IDX_SET.to_string(),
                 "index_set".to_string(),
                 Span::call_site(),
@@ -142,7 +143,7 @@ impl ExportedParams for ExportedFnParams {
                 span: item_span,
             } = attr;
             match (key.to_string().as_ref(), value) {
-                ("get", None) | ("set", None) | ("name", None) => {
+                ("get" | "set" | "name", None) => {
                     return Err(syn::Error::new(key.span(), "requires value"))
                 }
                 ("name", Some(s)) if s.value() == FN_IDX_GET => {
@@ -177,15 +178,11 @@ impl ExportedParams for ExportedFnParams {
                 }
                 ("name", Some(s)) => name.push(s.value()),
 
-                ("index_get", Some(s))
-                | ("index_set", Some(s))
-                | ("return_raw", Some(s))
-                | ("pure", Some(s))
-                | ("skip", Some(s))
-                | ("global", Some(s))
-                | ("internal", Some(s)) => {
-                    return Err(syn::Error::new(s.span(), "extraneous value"))
-                }
+                (
+                    "index_get" | "index_set" | "return_raw" | "pure" | "skip" | "global"
+                    | "internal",
+                    Some(s),
+                ) => return Err(syn::Error::new(s.span(), "extraneous value")),
 
                 ("pure", None) => pure = Some(item_span),
                 ("volatile", None) => volatile = Some(item_span),
@@ -254,7 +251,7 @@ impl ExportedParams for ExportedFnParams {
             }
         }
 
-        Ok(ExportedFnParams {
+        Ok(Self {
             name,
             return_raw,
             pure,
@@ -286,13 +283,6 @@ impl Parse for ExportedFn {
         let entire_span = fn_all.span();
         let str_type_path = syn::parse2::<syn::Path>(quote! { str }).unwrap();
 
-        let context_type_path1 = syn::parse2::<syn::Path>(quote! { NativeCallContext }).unwrap();
-        let context_type_path1x =
-            syn::parse2::<syn::Path>(quote! { NativeCallContext<'_> }).unwrap();
-        let context_type_path2 =
-            syn::parse2::<syn::Path>(quote! { rhai::NativeCallContext }).unwrap();
-        let context_type_path2x =
-            syn::parse2::<syn::Path>(quote! { rhai::NativeCallContext<'_> }).unwrap();
         let mut pass_context = false;
 
         let cfg_attrs = crate::attrs::collect_cfg_attr(&fn_all.attrs);
@@ -303,10 +293,17 @@ impl Parse for ExportedFn {
         if let Some(syn::FnArg::Typed(syn::PatType { ref ty, .. })) = fn_all.sig.inputs.first() {
             match flatten_type_groups(ty.as_ref()) {
                 syn::Type::Path(p)
-                    if p.path == context_type_path1
-                        || p.path == context_type_path1x
-                        || p.path == context_type_path2
-                        || p.path == context_type_path2x =>
+                    if [
+                        quote! { NativeCallContext },
+                        quote! { NativeCallContext<'_> },
+                        quote! { rhai::NativeCallContext },
+                        quote! { rhai::NativeCallContext<'_> },
+                    ]
+                    .iter()
+                    .cloned()
+                    .map(syn::parse2::<syn::Path>)
+                    .map(Result::unwrap)
+                    .any(|path| path == p.path) =>
                 {
                     pass_context = true;
                 }
@@ -348,12 +345,12 @@ impl Parse for ExportedFn {
 
         // All arguments after the first must be moved except for &str.
         for arg in fn_all.sig.inputs.iter().skip(skip_slots + 1) {
-            let ty = match arg {
-                syn::FnArg::Typed(syn::PatType { ref ty, .. }) => ty,
-                _ => unreachable!("receiver argument outside of first position!?"),
+            let syn::FnArg::Typed(syn::PatType { ref ty, .. }) = arg else {
+                unreachable!("receiver argument outside of first position!?");
             };
             let is_ok = match flatten_type_groups(ty.as_ref()) {
-                syn::Type::Reference(syn::TypeReference {
+                syn::Type::Verbatim(..)
+                | syn::Type::Reference(syn::TypeReference {
                     mutability: Some(_),
                     ..
                 }) => false,
@@ -364,7 +361,6 @@ impl Parse for ExportedFn {
                 }) => {
                     matches!(flatten_type_groups(elem.as_ref()), syn::Type::Path(ref p) if p.path == str_type_path)
                 }
-                syn::Type::Verbatim(..) => false,
                 _ => true,
             };
             if !is_ok {
@@ -393,7 +389,7 @@ impl Parse for ExportedFn {
                 _ => (),
             }
         }
-        Ok(ExportedFn {
+        Ok(Self {
             entire_span,
             signature: fn_all.sig,
             visibility,
@@ -410,7 +406,7 @@ impl Parse for ExportedFn {
 impl ExportedFn {
     #![allow(unused)]
 
-    pub fn params(&self) -> &ExportedFnParams {
+    pub const fn params(&self) -> &ExportedFnParams {
         &self.params
     }
 
@@ -428,31 +424,31 @@ impl ExportedFn {
         self.params.skip = !keep;
     }
 
-    pub fn skipped(&self) -> bool {
+    pub const fn skipped(&self) -> bool {
         self.params.skip
     }
 
-    pub fn pass_context(&self) -> bool {
+    pub const fn pass_context(&self) -> bool {
         self.pass_context
     }
 
-    pub fn signature(&self) -> &syn::Signature {
+    pub const fn signature(&self) -> &syn::Signature {
         &self.signature
     }
 
-    pub fn mutable_receiver(&self) -> bool {
+    pub const fn mutable_receiver(&self) -> bool {
         self.mut_receiver
     }
 
-    pub fn is_public(&self) -> bool {
+    pub const fn is_public(&self) -> bool {
         !matches!(self.visibility, syn::Visibility::Inherited)
     }
 
-    pub fn span(&self) -> &Span {
+    pub const fn span(&self) -> &Span {
         &self.entire_span
     }
 
-    pub fn name(&self) -> &syn::Ident {
+    pub const fn name(&self) -> &syn::Ident {
         &self.signature.ident
     }
 
@@ -482,7 +478,7 @@ impl ExportedFn {
         self.params
             .name
             .last()
-            .map_or_else(|| self.signature.ident.to_string().into(), |s| s.into())
+            .map_or_else(|| self.signature.ident.to_string().into(), Into::into)
     }
 
     pub fn arg_list(&self) -> impl Iterator<Item = &syn::FnArg> {
@@ -498,7 +494,7 @@ impl ExportedFn {
     pub fn return_type(&self) -> Option<&syn::Type> {
         match self.signature.output {
             syn::ReturnType::Type(.., ref ret_type) => Some(flatten_type_groups(ret_type)),
-            _ => None,
+            syn::ReturnType::Default => None,
         }
     }
 
@@ -509,11 +505,11 @@ impl ExportedFn {
 
     #[cfg(feature = "metadata")]
     pub fn set_comments(&mut self, comments: Vec<String>) {
-        self.comments = comments
+        self.comments = comments;
     }
 
     pub fn set_cfg_attrs(&mut self, cfg_attrs: Vec<syn::Attribute>) {
-        self.cfg_attrs = cfg_attrs
+        self.cfg_attrs = cfg_attrs;
     }
 
     pub fn set_params(&mut self, mut params: ExportedFnParams) -> syn::Result<()> {
@@ -628,10 +624,8 @@ impl ExportedFn {
 
         let mut dynamic_signature = self.signature.clone();
         dynamic_signature.ident = syn::Ident::new("dynamic_result_fn", Span::call_site());
-        dynamic_signature.output = syn::parse2::<syn::ReturnType>(quote! {
-            -> RhaiResult
-        })
-        .unwrap();
+        dynamic_signature.output =
+            syn::parse2::<syn::ReturnType>(quote! { -> RhaiResult }).unwrap();
         let arguments: Vec<_> = dynamic_signature
             .inputs
             .iter()
@@ -640,14 +634,13 @@ impl ExportedFn {
                     syn::Pat::Ident(ref ident) => Some(ident.ident.clone()),
                     _ => None,
                 },
-                _ => None,
+                syn::FnArg::Receiver(_) => None,
             })
             .collect();
 
         let return_span = self
             .return_type()
-            .map(|r| r.span())
-            .unwrap_or_else(Span::call_site)
+            .map_or_else(Span::call_site, Spanned::span)
             .resolved_at(Span::call_site());
         if self.params.return_raw.is_some() {
             quote_spanned! { return_span =>
@@ -686,52 +679,44 @@ impl ExportedFn {
 
         let return_type = self
             .return_type()
-            .map(print_type)
-            .unwrap_or_else(|| "()".to_string());
-
-        let skip_first_arg;
+            .map_or_else(|| "()".to_string(), print_type);
 
         if self.pass_context {
             unpack_exprs.push(syn::parse2::<syn::Expr>(quote! { context.unwrap() }).unwrap());
         }
 
         // Handle the first argument separately if the function has a "method like" receiver
-        if is_method_call {
-            skip_first_arg = true;
-            let first_arg = self.arg_list().next().unwrap();
+        let skip_first_arg = if is_method_call {
             let var = syn::Ident::new("arg0", Span::call_site());
-            match first_arg {
-                syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
-                    #[cfg(feature = "metadata")]
-                    let arg_name = format!("{}: {}", pat.to_token_stream(), print_type(ty));
-                    let arg_type = match flatten_type_groups(ty.as_ref()) {
-                        syn::Type::Reference(syn::TypeReference { ref elem, .. }) => elem.as_ref(),
-                        p => p,
-                    };
-                    let downcast_span = quote_spanned!(arg_type.span() =>
-                        &mut args[0usize].write_lock::<#arg_type>().unwrap()
-                    );
-                    unpack_statements.push(
-                        syn::parse2::<syn::Stmt>(quote! {
-                            let #var = #downcast_span;
-                        })
-                        .unwrap(),
-                    );
-                    #[cfg(feature = "metadata")]
-                    input_type_names.push(arg_name);
-                    input_type_exprs.push(
-                        syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
-                            TypeId::of::<#arg_type>()
-                        ))
-                        .unwrap(),
-                    );
-                }
-                syn::FnArg::Receiver(..) => todo!("true self parameters not implemented yet"),
-            }
+            let syn::FnArg::Typed(syn::PatType { pat, ty, .. }) = self.arg_list().next().unwrap()
+            else {
+                todo!("true self parameters not implemented yet")
+            };
+
+            #[cfg(feature = "metadata")]
+            let arg_name = format!("{}: {}", pat.to_token_stream(), print_type(ty));
+            let arg_type = match flatten_type_groups(ty.as_ref()) {
+                syn::Type::Reference(syn::TypeReference { ref elem, .. }) => elem.as_ref(),
+                p => p,
+            };
+            let downcast_span = quote_spanned!(arg_type.span() =>
+                &mut args[0usize].write_lock::<#arg_type>().unwrap()
+            );
+            unpack_statements
+                .push(syn::parse2::<syn::Stmt>(quote! { let #var = #downcast_span; }).unwrap());
+            #[cfg(feature = "metadata")]
+            input_type_names.push(arg_name);
+            input_type_exprs.push(
+                syn::parse2::<syn::Expr>(
+                    quote_spanned!(arg_type.span() => TypeId::of::<#arg_type>()),
+                )
+                .unwrap(),
+            );
             unpack_exprs.push(syn::parse2::<syn::Expr>(quote! { #var }).unwrap());
+            true
         } else {
-            skip_first_arg = false;
-        }
+            false
+        };
 
         // Handle the rest of the arguments, which all are passed by value.
         //
@@ -739,77 +724,73 @@ impl ExportedFn {
         // zero-copy conversion to &str by reference, or a cloned String.
         let str_type_path = syn::parse2::<syn::Path>(quote! { str }).unwrap();
         let string_type_path = syn::parse2::<syn::Path>(quote! { String }).unwrap();
-        for (i, arg) in self.arg_list().enumerate().skip(skip_first_arg as usize) {
-            let var = syn::Ident::new(&format!("arg{i}"), Span::call_site());
-            let is_string;
-            let is_ref;
-            match arg {
-                syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
-                    #[cfg(feature = "metadata")]
-                    let arg_name = format!("{}: {}", pat.to_token_stream(), print_type(ty));
-                    let arg_type = ty.as_ref();
-                    let downcast_span = match flatten_type_groups(arg_type) {
-                        syn::Type::Reference(syn::TypeReference {
-                            mutability: None,
-                            ref elem,
-                            ..
-                        }) => match flatten_type_groups(elem.as_ref()) {
-                            syn::Type::Path(ref p) if p.path == str_type_path => {
-                                is_string = true;
-                                is_ref = true;
-                                quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
-                                    mem::take(args[#i]).into_immutable_string().unwrap()
-                                )
-                            }
-                            _ => unreachable!("why wasn't this found earlier!?"),
-                        },
-                        syn::Type::Path(ref p) if p.path == string_type_path => {
-                            is_string = true;
-                            is_ref = false;
-                            quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
-                                mem::take(args[#i]).into_string().unwrap()
-                            )
-                        }
-                        _ => {
-                            is_string = false;
-                            is_ref = false;
-                            quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
-                                mem::take(args[#i]).cast::<#arg_type>()
-                            )
-                        }
-                    };
 
-                    unpack_statements.push(
-                        syn::parse2::<syn::Stmt>(quote! {
-                            let #var = #downcast_span;
-                        })
-                        .unwrap(),
-                    );
-                    #[cfg(feature = "metadata")]
-                    input_type_names.push(arg_name);
-                    if !is_string {
-                        input_type_exprs.push(
-                            syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
-                                TypeId::of::<#arg_type>()
-                            ))
-                            .unwrap(),
-                        );
-                    } else {
-                        input_type_exprs.push(
-                            syn::parse2::<syn::Expr>(quote_spanned!(arg_type.span() =>
-                                TypeId::of::<ImmutableString>()
-                            ))
-                            .unwrap(),
-                        );
-                    }
-                }
-                syn::FnArg::Receiver(..) => unreachable!("how did this happen!?"),
-            }
-            if !is_ref {
-                unpack_exprs.push(syn::parse2::<syn::Expr>(quote! { #var }).unwrap());
-            } else {
-                unpack_exprs.push(syn::parse2::<syn::Expr>(quote! { &#var }).unwrap());
-            }
+        for (i, arg) in self
+            .arg_list()
+            .enumerate()
+            .skip(usize::from(skip_first_arg))
+        {
+            let var = syn::Ident::new(&format!("arg{i}"), Span::call_site());
+            let syn::FnArg::Typed(syn::PatType { pat, ty, .. }) = arg else {
+                unreachable!("how did this happen!?")
+            };
+
+            #[cfg(feature = "metadata")]
+            let arg_name = format!("{}: {}", pat.to_token_stream(), print_type(ty));
+            let arg_type = ty.as_ref();
+            let (downcast_span, is_string, is_ref) = match flatten_type_groups(arg_type) {
+                syn::Type::Reference(syn::TypeReference {
+                    mutability: None,
+                    ref elem,
+                    ..
+                }) => match flatten_type_groups(elem.as_ref()) {
+                    _ => unreachable!("why wasn't this found earlier!?"),
+                    syn::Type::Path(ref p) if p.path == str_type_path => (
+                        quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
+                            mem::take(args[#i]).into_immutable_string().unwrap()
+                        ),
+                        true,
+                        true,
+                    ),
+                },
+                syn::Type::Path(ref p) if p.path == string_type_path => (
+                    quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
+                        mem::take(args[#i]).into_string().unwrap()
+                    ),
+                    true,
+                    false,
+                ),
+                _ => (
+                    quote_spanned!(arg_type.span().resolved_at(Span::call_site()) =>
+                        mem::take(args[#i]).cast::<#arg_type>()
+                    ),
+                    false,
+                    false,
+                ),
+            };
+
+            unpack_statements
+                .push(syn::parse2::<syn::Stmt>(quote! { let #var = #downcast_span; }).unwrap());
+            #[cfg(feature = "metadata")]
+            input_type_names.push(arg_name);
+            input_type_exprs.push(
+                syn::parse2::<syn::Expr>(
+                    //                    if is_string {
+                    // quote!(TypeId::of::<ImmutableString>())
+                    // } else {
+                    quote_spanned!(arg_type.span() => TypeId::of::<#arg_type>()), //    }
+                )
+                .unwrap(),
+            );
+
+            unpack_exprs.push(
+                syn::parse2::<syn::Expr>(if is_ref {
+                    quote! { &#var }
+                } else {
+                    quote! { #var }
+                })
+                .unwrap(),
+            );
         }
 
         // In method calls, the first argument will need to be mutably borrowed. Because Rust marks
@@ -825,17 +806,12 @@ impl ExportedFn {
         // This allows skipping the Dynamic::from wrap.
         let return_span = self
             .return_type()
-            .map(|r| r.span())
-            .unwrap_or_else(Span::call_site)
+            .map_or_else(Span::call_site, Spanned::span)
             .resolved_at(Span::call_site());
         let return_expr = if self.params.return_raw.is_none() {
-            quote_spanned! { return_span =>
-                Ok(Dynamic::from(#sig_name(#(#unpack_exprs),*)))
-            }
+            quote_spanned! { return_span => Ok(Dynamic::from(#sig_name(#(#unpack_exprs),*))) }
         } else {
-            quote_spanned! { return_span =>
-                #sig_name(#(#unpack_exprs),*).map(Dynamic::from)
-            }
+            quote_spanned! { return_span => #sig_name(#(#unpack_exprs),*).map(Dynamic::from) }
         };
 
         let type_name = syn::Ident::new(on_type_name, Span::call_site());

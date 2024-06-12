@@ -78,9 +78,7 @@ pub fn export_module(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
     let mut module_def = parse_macro_input!(input as module::Module);
-    if let Err(e) = module_def.set_params(parsed_params) {
-        return e.to_compile_error().into();
-    }
+    module_def.set_params(parsed_params);
 
     let tokens = module_def.generate();
     TokenStream::from(tokens)

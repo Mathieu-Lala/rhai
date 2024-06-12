@@ -1,14 +1,12 @@
-use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens};
-
-use std::collections::BTreeMap;
-
 use crate::attrs::ExportScope;
 use crate::function::{
     print_type, ExportedFn, FnNamespaceAccess, FnSpecialAccess, FN_GET, FN_IDX_GET, FN_IDX_SET,
     FN_SET,
 };
 use crate::module::Module;
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, ToTokens};
+use std::collections::BTreeMap;
 
 #[derive(Debug)]
 pub struct ExportedConst {
@@ -163,7 +161,7 @@ pub fn generate_body(
             match namespace {
                 FnNamespaceAccess::Unset => unreachable!("`namespace` should be set"),
                 FnNamespaceAccess::Global => {
-                    tokens.extend(quote! { .with_namespace(FnNamespace::Global) })
+                    tokens.extend(quote! { .with_namespace(FnNamespace::Global) });
                 }
                 FnNamespaceAccess::Internal => (),
             }
@@ -256,7 +254,7 @@ pub fn generate_body(
 }
 
 pub fn check_rename_collisions(fns: &[ExportedFn]) -> Result<(), syn::Error> {
-    fn make_key(name: impl ToString, item_fn: &ExportedFn) -> String {
+    fn make_key(name: &impl ToString, item_fn: &ExportedFn) -> String {
         item_fn
             .arg_list()
             .fold(name.to_string(), |mut arg_str, fn_arg| {
@@ -288,7 +286,7 @@ pub fn check_rename_collisions(fns: &[ExportedFn]) -> Result<(), syn::Error> {
 
             for (name, fn_name) in names {
                 let current_span = item_fn.params().span.unwrap();
-                let key = make_key(name, item_fn);
+                let key = make_key(&name, item_fn);
                 if let Some(other_span) = renames.insert(key, current_span) {
                     let mut err = syn::Error::new(
                         current_span,
